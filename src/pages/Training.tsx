@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -39,7 +38,7 @@ const Training = () => {
       id: '1',
       title: 'Présentation professionnelle',
       description: 'Présentez-vous de façon professionnelle et parlez de vos compétences.',
-      prompt: 'Imaginez que vous êtes en entretien d'embauche. Présentez-vous en mettant en valeur vos compétences et expériences de façon éloquente et professionnelle.',
+      prompt: "Imaginez que vous êtes en entretien d'embauche. Présentez-vous en mettant en valeur vos compétences et expériences de façon éloquente et professionnelle.",
       category: 'professional',
       difficulty: 'moyen'
     },
