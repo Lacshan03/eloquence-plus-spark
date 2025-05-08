@@ -1,16 +1,20 @@
+
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from '@/components/ui/textarea';
-import { ArrowRight, Mic, Send, RefreshCw, CheckCircle } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ArrowRight, Mic, BookOpen } from 'lucide-react';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import AudioRecorder from '@/components/AudioRecorder';
 import SessionResult from '@/components/SessionResult';
+import AudioAnalyzer, { AudioAnalysis } from '@/components/AudioAnalyzer';
+import VocabularySuggestions, { WordSuggestion } from '@/components/VocabularySuggestions';
+import { analyzeAudio } from '@/services/audioAnalysisService';
+import { useToast } from '@/hooks/use-toast';
 
+// Scenarios for training exercises
 interface Scenario {
   id: string;
   title: string;
@@ -21,18 +25,20 @@ interface Scenario {
 }
 
 const Training = () => {
-  const [searchParams] = useSearchParams();
-  const categoryParam = searchParams.get('category');
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
   
-  const [selectedTab, setSelectedTab] = useState<string>('oral');
-  const [textInput, setTextInput] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showResult, setShowResult] = useState(false);
-  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const categoryParam = searchParams.get('category');
   
-  // Scénarios d'exemple
+  const [activeTab, setActiveTab] = useState<string>('oral');
+  const [selectedScenario, setSelectedScenario] = useState<Scenario | null>(null);
+  const [sessionStep, setSessionStep] = useState<'select' | 'exercise' | 'results'>('select');
+  const [audioAnalysis, setAudioAnalysis] = useState<AudioAnalysis | null>(null);
+  const [wordSuggestions, setWordSuggestions] = useState<WordSuggestion[]>([]);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  // Mock scenarios data
   const scenarios: Scenario[] = [
     {
       id: '1',
@@ -44,260 +50,252 @@ const Training = () => {
     },
     {
       id: '2',
-      title: 'Argumentation persuasive',
-      description: 'Défendez votre point de vue sur un sujet controversé.',
-      prompt: "Défendez votre position sur l'importance de l'intelligence artificielle dans la société moderne, en utilisant des arguments structurés et un vocabulaire précis.",
-      category: categoryParam || 'persuasion',
+      title: 'Argumentation convaincante',
+      description: 'Défendez un point de vue avec des arguments structurés.',
+      prompt: "Choisissez un sujet qui vous tient à cœur et développez une argumentation convaincante en trois points principaux, avec une introduction et une conclusion.",
+      category: 'argumentation',
       difficulty: 'difficile'
     },
     {
       id: '3',
       title: 'Description détaillée',
-      description: 'Décrivez un lieu ou un événement avec précision et élégance.',
-      prompt: "Décrivez un lieu qui vous a marqué, en utilisant un vocabulaire riche et varié pour faire vivre ce lieu à travers vos mots.",
-      category: 'vocabulary',
+      description: 'Décrivez un lieu ou un objet avec un vocabulaire riche.',
+      prompt: "Décrivez un lieu qui vous a marqué en utilisant un vocabulaire précis et évocateur. Variez les registres sensoriels (vue, ouïe, odorat, toucher).",
+      category: 'description',
       difficulty: 'facile'
+    },
+    {
+      id: '4',
+      title: 'Narration fluide',
+      description: 'Racontez une histoire courte avec fluidité.',
+      prompt: "Racontez un événement marquant de votre vie de manière vivante et fluide, en soignant les transitions entre les différentes parties de votre récit.",
+      category: 'narration',
+      difficulty: 'moyen'
+    },
+    {
+      id: '5',
+      title: 'Vocabulaire technique',
+      description: 'Expliquez un concept technique avec clarté.',
+      prompt: "Choisissez un concept ou processus lié à votre domaine de compétence et expliquez-le de manière claire et précise en utilisant le vocabulaire technique approprié.",
+      category: 'vocabulary',
+      difficulty: 'difficile'
     }
   ];
-  
-  const [currentScenario, setCurrentScenario] = useState<Scenario>(
-    categoryParam 
-      ? scenarios.find(s => s.category === categoryParam) || scenarios[0] 
-      : scenarios[0]
-  );
-  
-  const handleSwitchScenario = () => {
-    const currentIndex = scenarios.findIndex(s => s.id === currentScenario.id);
-    const nextIndex = (currentIndex + 1) % scenarios.length;
-    setCurrentScenario(scenarios[nextIndex]);
-    setTextInput('');
-    toast({
-      description: "Scénario changé avec succès.",
-    });
+
+  // Filter scenarios by category if provided in URL params
+  const filteredScenarios = categoryParam 
+    ? scenarios.filter(scenario => scenario.category.toLowerCase() === categoryParam.toLowerCase())
+    : scenarios;
+
+  const handleScenarioSelect = (scenario: Scenario) => {
+    setSelectedScenario(scenario);
+    setSessionStep('exercise');
+    setAudioAnalysis(null);
+    setWordSuggestions([]);
   };
-  
-  const handleRecordingComplete = (blob: Blob) => {
-    setAudioBlob(blob);
-    toast({
-      description: "Enregistrement audio terminé.",
-    });
+
+  const handleNewScenario = () => {
+    setSelectedScenario(null);
+    setSessionStep('select');
+    setAudioAnalysis(null);
+    setWordSuggestions([]);
   };
-  
-  const handleSubmit = async () => {
-    if (selectedTab === 'ecrit' && !textInput.trim()) {
-      toast({
-        title: "Erreur",
-        description: "Veuillez écrire votre réponse avant de soumettre.",
-        variant: "destructive"
-      });
-      return;
-    }
-    
-    if (selectedTab === 'oral' && !audioBlob) {
-      toast({
-        title: "Erreur",
-        description: "Veuillez enregistrer votre réponse audio avant de soumettre.",
-        variant: "destructive"
-      });
-      return;
-    }
-    
-    setIsSubmitting(true);
-    
+
+  const handleRecordingComplete = async (audioBlob: Blob) => {
+    // In a real application, this would send the audio to your backend for processing
     try {
-      // Simulation d'une analyse et d'une réponse de l'API
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsAnalyzing(true);
+      toast({
+        title: "Analyse en cours",
+        description: "Nous analysons votre enregistrement...",
+      });
       
-      // Dans un cas réel, nous ferions un appel à l'API ici
-      // const formData = new FormData();
-      // if (selectedTab === 'oral') {
-      //   formData.append('audio', audioBlob);
-      // } else {
-      //   formData.append('text', textInput);
-      // }
-      
-      // const response = await fetch('/api/analyze', {
-      //   method: 'POST',
-      //   body: formData
-      // });
-      
-      // if (!response.ok) throw new Error("Erreur lors de l'analyse");
+      const result = await analyzeAudio(audioBlob);
+      setAudioAnalysis(result.analysis);
+      setWordSuggestions(result.suggestions);
       
       toast({
         title: "Analyse terminée",
-        description: "Votre performance a été évaluée avec succès.",
+        description: `Votre score: ${result.analysis.score}/100`,
       });
-      
-      setShowResult(true);
     } catch (error) {
+      console.error("Error analyzing audio:", error);
       toast({
-        title: "Erreur",
-        description: "Une erreur est survenue lors de l'analyse.",
-        variant: "destructive"
+        variant: "destructive",
+        title: "Erreur d'analyse",
+        description: "Une erreur s'est produite lors de l'analyse de votre enregistrement.",
       });
     } finally {
-      setIsSubmitting(false);
+      setIsAnalyzing(false);
     }
   };
-  
+
   const handleFinishSession = () => {
-    setShowResult(false);
-    setTextInput('');
-    setAudioBlob(null);
+    // In a real application, this would save the session results to your backend
+    setSessionStep('results');
+  };
+
+  const handleReturnToDashboard = () => {
     navigate('/dashboard');
   };
-  
-  // Résultats simulés
-  const simulatedResults = {
-    score: 78,
-    fluidity: 75,
-    vocabulary: 80,
-    grammar: 78,
-    feedback: "Votre réponse démontre une bonne maîtrise du sujet. Votre vocabulaire est riche et varié, mais vous pourriez améliorer la fluidité de votre discours en évitant les hésitations. J'ai également remarqué quelques erreurs de syntaxe qui pourraient être corrigées. Pour enrichir davantage votre expression, essayez d'utiliser des connecteurs logiques plus variés et des synonymes plus précis pour les termes récurrents.",
-    suggestedWords: ["Convaincant", "Perspicace", "Manifeste", "Prépondérant", "Élucider", "Étoffer", "Paradigme"]
+
+  const renderSessionStep = () => {
+    switch (sessionStep) {
+      case 'select':
+        return (
+          <div className="container max-w-4xl">
+            <h2 className="text-2xl font-poppins font-medium mb-6">Choisissez un scénario</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+              {filteredScenarios.map((scenario) => (
+                <Card 
+                  key={scenario.id} 
+                  className="eloquence-card overflow-hidden cursor-pointer transition-transform hover:scale-[1.02]"
+                  onClick={() => handleScenarioSelect(scenario)}
+                >
+                  <div className="p-6 flex flex-col h-full">
+                    <div className="flex justify-between items-start mb-3">
+                      <h3 className="text-xl font-medium">{scenario.title}</h3>
+                      <span className={`px-2 py-1 text-xs rounded-full ${
+                        scenario.difficulty === 'facile' 
+                          ? 'bg-green-100 text-green-800' 
+                          : scenario.difficulty === 'moyen'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-red-100 text-red-800'
+                      }`}>
+                        {scenario.difficulty}
+                      </span>
+                    </div>
+                    <p className="text-gray-600 mb-4">{scenario.description}</p>
+                    <div className="mt-auto flex justify-end">
+                      <Button 
+                        variant="ghost" 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleScenarioSelect(scenario);
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        Sélectionner <ArrowRight size={16} />
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </div>
+        );
+      case 'exercise':
+        return (
+          <div className="container max-w-4xl">
+            {selectedScenario && (
+              <>
+                <div className="flex flex-col md:flex-row justify-between items-start mb-6">
+                  <div>
+                    <h2 className="text-2xl font-poppins font-medium mb-1">{selectedScenario.title}</h2>
+                    <p className="text-gray-600">{selectedScenario.description}</p>
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    onClick={handleNewScenario}
+                    className="mt-4 md:mt-0"
+                  >
+                    Changer de scénario
+                  </Button>
+                </div>
+                
+                <Card className="eloquence-card mb-6 p-6">
+                  <h3 className="text-lg font-medium mb-2">Consigne</h3>
+                  <p className="text-gray-700">{selectedScenario.prompt}</p>
+                </Card>
+                
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                  <AudioRecorder onRecordingComplete={handleRecordingComplete} />
+                  <AudioAnalyzer 
+                    analysis={audioAnalysis}
+                    isLoading={isAnalyzing}
+                  />
+                </div>
+                
+                <VocabularySuggestions 
+                  suggestions={wordSuggestions}
+                  isLoading={isAnalyzing}
+                />
+                
+                <div className="flex justify-end mt-8">
+                  <Button 
+                    onClick={handleFinishSession}
+                    disabled={!audioAnalysis || isAnalyzing}
+                    className="bg-eloquence-primary hover:bg-eloquence-primary/90"
+                  >
+                    Terminer la session
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        );
+      case 'results':
+        return (
+          <div className="container max-w-4xl">
+            {audioAnalysis && (
+              <SessionResult 
+                score={audioAnalysis.score}
+                fluidity={audioAnalysis.metrics.find(m => m.name === "Fluidité")?.value || 0}
+                vocabulary={audioAnalysis.metrics.find(m => m.name === "Vocabulaire")?.value || 0}
+                grammar={audioAnalysis.metrics.find(m => m.name === "Grammaire")?.value || 0}
+                feedback="Votre présentation démontre une bonne maîtrise générale de l'expression orale. Votre grammaire est excellente, et votre fluidité est satisfaisante. Concentrez-vous sur l'enrichissement de votre vocabulaire en utilisant des termes plus précis et variés pour renforcer l'impact de votre discours."
+                suggestedWords={wordSuggestions.map(s => s.suggestion)}
+                onFinish={handleReturnToDashboard}
+              />
+            )}
+          </div>
+        );
+      default:
+        return null;
+    }
   };
-  
+
   return (
     <div className="min-h-screen flex flex-col">
       <Navbar isLoggedIn={true} />
       
       <main className="flex-grow bg-gray-50 py-8">
-        <div className="container">
-          {!showResult ? (
-            <>
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
-                <div>
-                  <h1 className="text-3xl font-poppins font-bold mb-2">Session d'entraînement</h1>
-                  <p className="text-gray-600">Perfectionnez votre éloquence avec nos exercices personnalisés</p>
-                </div>
-                <Button 
-                  variant="outline" 
-                  onClick={handleSwitchScenario}
-                  className="mt-4 md:mt-0 flex items-center gap-1"
-                >
-                  <RefreshCw size={14} className="mr-1" />
-                  Changer de scénario
-                </Button>
-              </div>
+        <div className="container mb-8">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
+            <div>
+              <h1 className="text-3xl font-poppins font-bold mb-2">Entraînement</h1>
+              <p className="text-gray-600">Améliorez votre éloquence avec nos exercices personnalisés</p>
+            </div>
+          </div>
+          
+          {sessionStep === 'select' && (
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full mb-8">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="oral" className="flex items-center gap-2">
+                  <Mic size={16} />
+                  Exercices oraux
+                </TabsTrigger>
+                <TabsTrigger value="ecrit" className="flex items-center gap-2">
+                  <BookOpen size={16} />
+                  Exercices écrits
+                </TabsTrigger>
+              </TabsList>
               
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-                <div className="lg:col-span-2">
-                  <Card className="p-6 eloquence-card mb-6">
-                    <h2 className="text-xl font-medium mb-2">{currentScenario.title}</h2>
-                    <p className="text-gray-600 mb-4">{currentScenario.description}</p>
-                    <div className="bg-eloquence-light p-4 rounded-md mb-4">
-                      <p className="text-gray-800">{currentScenario.prompt}</p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <span className="px-3 py-1 bg-eloquence-primary/10 text-eloquence-primary rounded-full text-sm">
-                        {currentScenario.category.charAt(0).toUpperCase() + currentScenario.category.slice(1)}
-                      </span>
-                      <span className={`px-3 py-1 rounded-full text-sm ${
-                        currentScenario.difficulty === 'facile' 
-                          ? 'bg-green-100 text-green-800' 
-                          : currentScenario.difficulty === 'moyen' 
-                            ? 'bg-yellow-100 text-yellow-800' 
-                            : 'bg-red-100 text-red-800'
-                      }`}>
-                        {currentScenario.difficulty.charAt(0).toUpperCase() + currentScenario.difficulty.slice(1)}
-                      </span>
-                    </div>
-                  </Card>
-                  
-                  <Tabs value={selectedTab} onValueChange={setSelectedTab} className="w-full">
-                    <TabsList className="grid grid-cols-2 mb-6">
-                      <TabsTrigger value="oral" className="flex items-center gap-1">
-                        <Mic size={14} />
-                        Exercice oral
-                      </TabsTrigger>
-                      <TabsTrigger value="ecrit" className="flex items-center gap-1">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                        </svg>
-                        Exercice écrit
-                      </TabsTrigger>
-                    </TabsList>
-                    
-                    <TabsContent value="oral" className="animate-fade-in">
-                      <AudioRecorder onRecordingComplete={handleRecordingComplete} />
-                    </TabsContent>
-                    
-                    <TabsContent value="ecrit" className="animate-fade-in">
-                      <Card className="p-6 eloquence-card">
-                        <h3 className="text-lg font-medium mb-4">Votre réponse écrite</h3>
-                        <Textarea 
-                          placeholder="Rédigez votre réponse ici..." 
-                          value={textInput}
-                          onChange={(e) => setTextInput(e.target.value)}
-                          className="min-h-[200px] mb-4"
-                        />
-                      </Card>
-                    </TabsContent>
-                  </Tabs>
+              <TabsContent value="oral">
+                {renderSessionStep()}
+              </TabsContent>
+              
+              <TabsContent value="ecrit">
+                <div className="flex flex-col items-center justify-center p-10 text-center">
+                  <BookOpen size={48} className="text-gray-300 mb-4" />
+                  <h3 className="text-xl font-medium mb-2">Les exercices écrits seront disponibles prochainement</h3>
+                  <p className="text-gray-500 mb-6">Notre équipe travaille actuellement sur de nouveaux exercices pour améliorer votre expression écrite.</p>
                 </div>
-                
-                <div>
-                  <Card className="eloquence-card overflow-hidden">
-                    <div className="p-6 border-b border-gray-100">
-                      <h2 className="text-xl font-medium mb-2">Instructions</h2>
-                      <ul className="space-y-3 text-gray-600 mb-6">
-                        <li className="flex items-start">
-                          <CheckCircle size={16} className="text-green-500 mt-1 mr-2 flex-shrink-0" />
-                          <span>Lisez attentivement le scénario proposé</span>
-                        </li>
-                        <li className="flex items-start">
-                          <CheckCircle size={16} className="text-green-500 mt-1 mr-2 flex-shrink-0" />
-                          <span>Choisissez entre un exercice oral ou écrit</span>
-                        </li>
-                        <li className="flex items-start">
-                          <CheckCircle size={16} className="text-green-500 mt-1 mr-2 flex-shrink-0" />
-                          <span>Pour l'exercice oral, enregistrez votre réponse</span>
-                        </li>
-                        <li className="flex items-start">
-                          <CheckCircle size={16} className="text-green-500 mt-1 mr-2 flex-shrink-0" />
-                          <span>Pour l'exercice écrit, rédigez votre réponse</span>
-                        </li>
-                        <li className="flex items-start">
-                          <CheckCircle size={16} className="text-green-500 mt-1 mr-2 flex-shrink-0" />
-                          <span>Soumettez votre réponse pour analyse</span>
-                        </li>
-                      </ul>
-                      <div className="bg-blue-50 p-4 rounded-md text-sm text-blue-800">
-                        <p className="font-medium mb-1">Conseil</p>
-                        <p>Utilisez un vocabulaire riche et varié. Évitez les répétitions et les hésitations.</p>
-                      </div>
-                    </div>
-                    <div className="p-6">
-                      <Button 
-                        className="w-full bg-eloquence-primary hover:bg-eloquence-primary/90 flex items-center justify-center gap-1"
-                        onClick={handleSubmit}
-                        disabled={isSubmitting}
-                      >
-                        {isSubmitting ? (
-                          <>Analyse en cours...</>
-                        ) : (
-                          <>
-                            <Send size={14} className="mr-1" />
-                            Soumettre pour analyse
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </Card>
-                </div>
-              </div>
-            </>
-          ) : (
-            <SessionResult
-              score={simulatedResults.score}
-              fluidity={simulatedResults.fluidity}
-              vocabulary={simulatedResults.vocabulary}
-              grammar={simulatedResults.grammar}
-              feedback={simulatedResults.feedback}
-              suggestedWords={simulatedResults.suggestedWords}
-              onFinish={handleFinishSession}
-            />
+              </TabsContent>
+            </Tabs>
           )}
+          
+          {sessionStep !== 'select' && renderSessionStep()}
         </div>
       </main>
       

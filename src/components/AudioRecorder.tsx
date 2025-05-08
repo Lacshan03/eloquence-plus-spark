@@ -1,8 +1,9 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Mic, MicOff, Play, Pause } from 'lucide-react';
+import { Mic, MicOff, Play, Pause, AudioWaveform } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
 interface AudioRecorderProps {
   onRecordingComplete: (audioBlob: Blob) => void;
@@ -12,15 +13,49 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onRecordingComplete }) =>
   const [isRecording, setIsRecording] = useState(false);
   const [audioURL, setAudioURL] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [timer, setTimer] = useState(0);
+  const [audioData, setAudioData] = useState<number[]>([]);
+  
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [timer, setTimer] = useState(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  
+  const { toast } = useToast();
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close();
+      }
+    };
+  }, []);
 
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // Set up AudioContext and Analyzer for visualization
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const source = audioContextRef.current.createMediaStreamSource(stream);
+      analyserRef.current = audioContextRef.current.createAnalyser();
+      analyserRef.current.fftSize = 256;
+      source.connect(analyserRef.current);
+      
+      // Start visualization
+      visualize();
+      
+      // Set up MediaRecorder
       mediaRecorderRef.current = new MediaRecorder(stream);
       audioChunksRef.current = [];
 
@@ -34,8 +69,19 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onRecordingComplete }) =>
         setAudioURL(audioUrl);
         onRecordingComplete(audioBlob);
 
+        // Stop visualization
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
+          animationFrameRef.current = null;
+        }
+
         // Stop all tracks to turn off the microphone
         stream.getTracks().forEach(track => track.stop());
+        
+        toast({
+          title: "Enregistrement terminé",
+          description: `Durée: ${formatTime(timer)}`,
+        });
       });
 
       // Start recording
@@ -43,6 +89,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onRecordingComplete }) =>
       setIsRecording(true);
       setAudioURL(null);
       setTimer(0);
+      setAudioData([]);
 
       // Start timer
       timerRef.current = setInterval(() => {
@@ -51,7 +98,11 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onRecordingComplete }) =>
 
     } catch (error) {
       console.error("Error accessing microphone:", error);
-      alert("Impossible d'accéder au microphone. Veuillez vérifier les permissions.");
+      toast({
+        variant: "destructive",
+        title: "Erreur d'accès au microphone",
+        description: "Veuillez vérifier les permissions de votre navigateur.",
+      });
     }
   };
 
@@ -80,6 +131,26 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onRecordingComplete }) =>
     setIsPlaying(!isPlaying);
   };
 
+  const visualize = () => {
+    if (!analyserRef.current) return;
+    
+    const bufferLength = analyserRef.current.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    const updateWaveform = () => {
+      if (!analyserRef.current) return;
+      
+      analyserRef.current.getByteFrequencyData(dataArray);
+      // Convert to normalized values for visualization
+      const normalizedData = Array.from(dataArray).map(value => value / 255.0);
+      setAudioData(normalizedData.slice(0, 32)); // Limit data points for visualization
+      
+      animationFrameRef.current = requestAnimationFrame(updateWaveform);
+    };
+    
+    updateWaveform();
+  };
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -100,6 +171,17 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onRecordingComplete }) =>
               <div className="text-center">
                 <p className="text-red-500 font-medium">Enregistrement en cours</p>
                 <p className="text-lg font-medium mt-2">{formatTime(timer)}</p>
+              </div>
+              
+              {/* Audio waveform visualization */}
+              <div className="w-full h-12 flex items-center justify-center gap-0.5 my-2">
+                {audioData.map((value, index) => (
+                  <div 
+                    key={index} 
+                    className="w-1 bg-red-400 rounded-full animate-pulse"
+                    style={{ height: `${Math.max(5, value * 48)}px` }}
+                  />
+                ))}
               </div>
             </div>
           ) : (
