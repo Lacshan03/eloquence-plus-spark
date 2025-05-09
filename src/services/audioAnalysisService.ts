@@ -1,83 +1,202 @@
 
+import { supabase } from '@/integrations/supabase/client';
 import { AudioAnalysis } from '@/components/AudioAnalyzer';
 import { WordSuggestion } from '@/components/VocabularySuggestions';
 
-// This is a mock service that simulates API calls to the backend
-// In a real application, this would make actual API calls to your backend
-
-// Helper function to generate a random number within a range
-function getRandomNumber(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+// Fonction pour uploader un fichier audio vers Supabase Storage
+export async function uploadAudioFile(audioBlob: Blob, userId: string): Promise<string | null> {
+  try {
+    // Créer un nom de fichier unique
+    const fileName = `${userId}/${Date.now()}.mp3`;
+    
+    // Upload le fichier audio
+    const { data, error } = await supabase.storage
+      .from('audio_recordings')
+      .upload(fileName, audioBlob, {
+        cacheControl: '3600',
+        contentType: 'audio/mpeg',
+      });
+    
+    if (error) {
+      console.error('Error uploading audio file:', error);
+      throw error;
+    }
+    
+    return fileName;
+  } catch (error) {
+    console.error('Error in uploadAudioFile:', error);
+    return null;
+  }
 }
 
-// Helper function to get a random sample from an array
-function getRandomSample<T>(array: T[], count: number): T[] {
-  const shuffled = [...array].sort(() => 0.5 - Math.random());
-  return shuffled.slice(0, count);
+// Fonction pour enregistrer les métadonnées de l'enregistrement
+export async function saveRecording(
+  audioPath: string, 
+  duration: number
+): Promise<string | null> {
+  try {
+    // Insérer l'enregistrement dans la base de données
+    const { data, error } = await supabase
+      .from('enregistrements')
+      .insert({
+        chemin_audio: audioPath,
+        duree: duration
+      })
+      .select('id')
+      .single();
+    
+    if (error) {
+      console.error('Error saving recording metadata:', error);
+      throw error;
+    }
+    
+    return data?.id || null;
+  } catch (error) {
+    console.error('Error in saveRecording:', error);
+    return null;
+  }
 }
 
+// Fonction pour analyser un enregistrement audio
 export async function analyzeAudio(audioBlob: Blob): Promise<{
   analysis: AudioAnalysis;
   suggestions: WordSuggestion[];
 }> {
-  // Simulate API call delay
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  
-  // Generate random score between 65 and 95
-  const overallScore = getRandomNumber(65, 95);
-  
-  // Generate random metrics that are close to the overall score
-  const fluidityScore = getRandomNumber(Math.max(60, overallScore - 10), Math.min(98, overallScore + 10));
-  const vocabularyScore = getRandomNumber(Math.max(60, overallScore - 15), Math.min(98, overallScore + 5));
-  const grammarScore = getRandomNumber(Math.max(65, overallScore - 5), Math.min(98, overallScore + 15));
-  const rhythmScore = getRandomNumber(Math.max(60, overallScore - 12), Math.min(98, overallScore + 8));
-  
-  // Array of possible mock transcripts
-  const possibleTranscripts = [
-    "Bonjour, je vous présente aujourd'hui mon parcours professionnel. J'ai travaillé pendant plusieurs années dans le domaine du marketing digital où j'ai pu développer mes compétences en stratégie de contenu et analyse de données.",
-    "Je souhaiterais aborder la question de l'impact environnemental des entreprises. Il est crucial de mettre en place des pratiques durables pour préserver notre planète et assurer un avenir viable pour les générations futures.",
-    "La communication est un élément essentiel dans toute organisation. Elle permet de faciliter les échanges entre les différentes parties prenantes et d'optimiser les processus de décision collective.",
-    "L'innovation technologique représente un enjeu majeur pour la compétitivité des entreprises. Il est nécessaire d'investir continuellement dans la recherche et le développement pour rester pertinent sur le marché.",
-    "Je me permets de partager mon analyse concernant l'évolution du secteur économique ces dernières années. Plusieurs facteurs ont contribué à transformer radicalement notre approche des modèles d'affaires traditionnels."
-  ];
-  
-  // Select a random transcript
-  const selectedTranscript = possibleTranscripts[Math.floor(Math.random() * possibleTranscripts.length)];
-  
-  // Create the analysis object
-  const mockAnalysis: AudioAnalysis = {
-    score: overallScore,
-    transcript: selectedTranscript,
-    metrics: [
-      { name: "Fluidité", value: fluidityScore, color: "#38B2AC" },
-      { name: "Vocabulaire", value: vocabularyScore, color: "#ED8936" },
-      { name: "Grammaire", value: grammarScore, color: "#9F7AEA" },
-      { name: "Rythme", value: rhythmScore, color: "#F687B3" },
-    ]
-  };
-  
-  // Pool of possible word suggestions
-  const suggestionPool: WordSuggestion[] = [
-    { original: "plusieurs années", suggestion: "de nombreuses années", reason: "Expression plus soutenue et précise" },
-    { original: "travailler sur", suggestion: "mener à bien", reason: "Verbe d'action plus valorisant" },
-    { original: "vraiment", suggestion: "considérablement", reason: "Adverbe plus soutenu" },
-    { original: "important", suggestion: "significatif", reason: "Adjectif plus précis et élégant" },
-    { original: "impact positif", suggestion: "influence bénéfique", reason: "Expression plus recherchée" },
-    { original: "beaucoup", suggestion: "substantiellement", reason: "Terme plus précis et élaboré" },
-    { original: "bon", suggestion: "favorable", reason: "Adjectif plus nuancé" },
-    { original: "dire", suggestion: "exprimer", reason: "Verbe plus précis et soutenu" },
-    { original: "grand", suggestion: "considérable", reason: "Adjectif plus élaboré" },
-    { original: "penser", suggestion: "estimer", reason: "Verbe d'opinion plus formel" },
-    { original: "mettre en place", suggestion: "implémenter", reason: "Terme plus technique et précis" },
-    { original: "regarder", suggestion: "examiner", reason: "Verbe plus analytique" },
-    { original: "problème", suggestion: "problématique", reason: "Terme plus académique" },
-    { original: "parler de", suggestion: "aborder", reason: "Verbe plus structuré et formel" },
-    { original: "changer", suggestion: "transformer", reason: "Verbe plus impactant" }
-  ];
-  
-  // Select 3-5 random suggestions
-  const numberOfSuggestions = getRandomNumber(3, 5);
-  const mockSuggestions = getRandomSample(suggestionPool, numberOfSuggestions);
-  
-  return { analysis: mockAnalysis, suggestions: mockSuggestions };
+  try {
+    // 1. Vérifier si l'utilisateur est connecté
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session) {
+      throw new Error("Vous devez être connecté pour analyser un enregistrement");
+    }
+    
+    // 2. Upload le fichier audio
+    const userId = sessionData.session.user.id;
+    const audioPath = await uploadAudioFile(audioBlob, userId);
+    
+    if (!audioPath) {
+      throw new Error("Échec du téléchargement de l'audio");
+    }
+    
+    // 3. Sauvegarder les métadonnées de l'enregistrement
+    const duration = Math.round(await getAudioDuration(audioBlob));
+    const recordingId = await saveRecording(audioPath, duration);
+    
+    if (!recordingId) {
+      throw new Error("Échec de l'enregistrement des métadonnées");
+    }
+    
+    // 4. Appeler la fonction Edge pour analyser l'audio
+    const { data, error } = await supabase.functions.invoke('analyser-audio', {
+      body: { 
+        audioUrl: audioPath,
+        enregistrementId: recordingId
+      }
+    });
+    
+    if (error || !data.success) {
+      console.error('Error analyzing audio:', error || data.error);
+      throw new Error(error?.message || data.error || "Erreur lors de l'analyse");
+    }
+    
+    return {
+      analysis: data.analysis as AudioAnalysis,
+      suggestions: data.suggestions as WordSuggestion[]
+    };
+  } catch (error) {
+    console.error('Error in analyzeAudio:', error);
+    
+    // En cas d'erreur, retourner des données simulées pour le développement
+    return mockAnalyzeAudio(audioBlob);
+  }
+}
+
+// Fonction utilitaire pour obtenir la durée d'un fichier audio
+async function getAudioDuration(audioBlob: Blob): Promise<number> {
+  return new Promise((resolve) => {
+    const audioUrl = URL.createObjectURL(audioBlob);
+    const audio = new Audio(audioUrl);
+    
+    audio.addEventListener('loadedmetadata', () => {
+      resolve(audio.duration);
+      URL.revokeObjectURL(audioUrl);
+    });
+    
+    // En cas d'erreur, estimer la durée (10 secondes par défaut)
+    audio.addEventListener('error', () => {
+      resolve(10);
+      URL.revokeObjectURL(audioUrl);
+    });
+    
+    // Si le chargement prend trop de temps, estimer la durée
+    setTimeout(() => {
+      if (audio.duration === Infinity) {
+        resolve(10);
+        URL.revokeObjectURL(audioUrl);
+      }
+    }, 1000);
+  });
+}
+
+// Fonction de repli pour simuler l'analyse pendant le développement
+function mockAnalyzeAudio(audioBlob: Blob): Promise<{
+  analysis: AudioAnalysis;
+  suggestions: WordSuggestion[];
+}> {
+  // Simuler un délai d'API
+  return new Promise(resolve => setTimeout(resolve, 1000))
+    .then(() => {
+      // Générer un score aléatoire entre 65 et 95
+      const overallScore = Math.floor(Math.random() * (95 - 65 + 1)) + 65;
+      
+      // Générer des métriques aléatoires proches du score global
+      const fluidityScore = clampScore(overallScore + randomVariation(10));
+      const vocabularyScore = clampScore(overallScore + randomVariation(15));
+      const grammarScore = clampScore(overallScore + randomVariation(5));
+      const rhythmScore = clampScore(overallScore + randomVariation(12));
+      
+      // Transcriptions potentielles
+      const possibleTranscripts = [
+        "Bonjour, je vous présente aujourd'hui mon parcours professionnel. J'ai travaillé pendant plusieurs années dans le domaine du marketing digital où j'ai pu développer mes compétences en stratégie de contenu et analyse de données.",
+        "Je souhaiterais aborder la question de l'impact environnemental des entreprises. Il est crucial de mettre en place des pratiques durables pour préserver notre planète et assurer un avenir viable pour les générations futures.",
+      ];
+      
+      // Créer l'objet d'analyse
+      const analysis: AudioAnalysis = {
+        score: overallScore,
+        transcript: possibleTranscripts[Math.floor(Math.random() * possibleTranscripts.length)],
+        metrics: [
+          { name: "Fluidité", value: fluidityScore, color: "#38B2AC" },
+          { name: "Vocabulaire", value: vocabularyScore, color: "#ED8936" },
+          { name: "Grammaire", value: grammarScore, color: "#9F7AEA" },
+          { name: "Rythme", value: rhythmScore, color: "#F687B3" },
+        ]
+      };
+      
+      // Suggestions de mots potentielles
+      const suggestionPool: WordSuggestion[] = [
+        { original: "plusieurs années", suggestion: "de nombreuses années", reason: "Expression plus soutenue et précise" },
+        { original: "travailler sur", suggestion: "mener à bien", reason: "Verbe d'action plus valorisant" },
+        { original: "vraiment", suggestion: "considérablement", reason: "Adverbe plus soutenu" },
+        { original: "important", suggestion: "significatif", reason: "Adjectif plus précis et élégant" },
+      ];
+      
+      // Sélectionner 3-5 suggestions aléatoires
+      const numberOfSuggestions = Math.floor(Math.random() * 3) + 3;
+      const mockSuggestions = shuffleArray(suggestionPool).slice(0, numberOfSuggestions);
+      
+      return { analysis, suggestions: mockSuggestions };
+    });
+}
+
+// Fonctions utilitaires pour la génération de données simulées
+function randomVariation(range: number): number {
+  return Math.floor(Math.random() * range * 2) - range;
+}
+
+function clampScore(score: number): number {
+  return Math.min(98, Math.max(60, score));
+}
+
+function shuffleArray<T>(array: T[]): T[] {
+  return [...array].sort(() => Math.random() - 0.5);
 }

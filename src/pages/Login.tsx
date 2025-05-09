@@ -1,20 +1,28 @@
 
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useState, useContext } from 'react';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import Logo from '@/components/Logo';
-import { Eye, EyeOff } from 'lucide-react';
+import { signIn } from '@/services/authService';
+import { AuthContext } from '@/App';
+import Navbar from '@/components/Navbar';
+import Footer from '@/components/Footer';
 
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const navigate = useNavigate();
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const auth = useContext(AuthContext);
+  
+  // Si l'utilisateur est déjà connecté, rediriger vers le tableau de bord
+  if (auth.user && !auth.isLoading) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,7 +31,7 @@ const Login = () => {
       toast({
         title: "Erreur",
         description: "Veuillez remplir tous les champs",
-        variant: "destructive"
+        variant: "destructive",
       });
       return;
     }
@@ -31,29 +39,33 @@ const Login = () => {
     setIsLoading(true);
     
     try {
-      // Simulation d'une connexion réussie
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const { user, error } = await signIn(email, password);
       
-      // Dans un cas réel, nous ferions un appel à l'API ici
-      // const response = await fetch('/api/login', {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify({ email, password })
-      // });
+      if (error) {
+        throw error;
+      }
       
-      // if (!response.ok) throw new Error('Identifiants invalides');
-      
-      toast({
-        title: "Connexion réussie",
-        description: "Bienvenue sur Éloquence Plus!",
-      });
-      
-      navigate('/dashboard');
+      if (user) {
+        toast({
+          title: "Connexion réussie",
+          description: "Bienvenue sur Éloquence Plus !",
+        });
+        navigate('/dashboard');
+      }
     } catch (error) {
+      let message = "Une erreur est survenue lors de la connexion";
+      
+      if (error instanceof Error) {
+        // Messages d'erreur plus spécifiques
+        if (error.message.includes("Invalid login")) {
+          message = "Email ou mot de passe incorrect";
+        }
+      }
+      
       toast({
-        title: "Échec de la connexion",
-        description: "Identifiants invalides. Veuillez réessayer.",
-        variant: "destructive"
+        title: "Erreur de connexion",
+        description: message,
+        variant: "destructive",
       });
     } finally {
       setIsLoading(false);
@@ -61,84 +73,67 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <Logo size="lg" className="mb-4 inline-block" />
-          <h1 className="text-2xl font-poppins font-medium mb-2">Connexion</h1>
-          <p className="text-gray-600">Connectez-vous pour continuer votre progression</p>
-        </div>
-        
-        <Card className="p-6 bg-white shadow-md rounded-lg animate-fade-in">
-          <form onSubmit={handleSubmit}>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                  Adresse email
-                </label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="votre@email.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="w-full"
-                  autoComplete="email"
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                    Mot de passe
-                  </label>
-                  <Link to="/forgot-password" className="text-sm text-eloquence-primary hover:underline">
-                    Mot de passe oublié ?
-                  </Link>
-                </div>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    className="w-full pr-10"
-                    autoComplete="current-password"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500"
-                    onClick={() => setShowPassword(!showPassword)}
-                    aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
-                  >
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
-              </div>
-              
-              <Button 
-                type="submit" 
-                className="w-full bg-eloquence-primary hover:bg-eloquence-primary/90"
+    <div className="min-h-screen flex flex-col">
+      <Navbar />
+      
+      <main className="flex-grow flex items-center justify-center bg-gray-50 py-12">
+        <Card className="w-full max-w-md p-8 eloquence-card">
+          <div className="text-center mb-6">
+            <h1 className="text-2xl font-poppins font-bold">Connexion</h1>
+            <p className="text-gray-600 mt-2">Accédez à votre espace Éloquence Plus</p>
+          </div>
+          
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="votre@email.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 disabled={isLoading}
-              >
-                {isLoading ? "Connexion en cours..." : "Se connecter"}
-              </Button>
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Mot de passe</Label>
+                <Link to="/forgot-password" className="text-sm text-eloquence-primary hover:underline">
+                  Mot de passe oublié?
+                </Link>
+              </div>
+              <Input
+                id="password"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={isLoading}
+              />
+            </div>
+            
+            <Button 
+              type="submit" 
+              className="w-full bg-eloquence-primary hover:bg-eloquence-primary/90"
+              disabled={isLoading}
+            >
+              {isLoading ? 'Connexion en cours...' : 'Se connecter'}
+            </Button>
+            
+            <div className="text-center mt-4">
+              <span className="text-sm text-gray-600">
+                Vous n'avez pas de compte?{' '}
+                <Link to="/signup" className="text-eloquence-primary hover:underline">
+                  Inscription
+                </Link>
+              </span>
             </div>
           </form>
         </Card>
-        
-        <div className="text-center mt-6">
-          <p className="text-gray-600">
-            Pas encore de compte ?{" "}
-            <Link to="/signup" className="text-eloquence-primary hover:underline font-medium">
-              S'inscrire
-            </Link>
-          </p>
-        </div>
-      </div>
+      </main>
+      
+      <Footer />
     </div>
   );
 };
