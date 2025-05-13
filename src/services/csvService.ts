@@ -1,4 +1,3 @@
-
 import { saveAs } from 'file-saver';
 import Papa from 'papaparse';
 import { WordSuggestion } from '@/components/VocabularySuggestions';
@@ -198,7 +197,7 @@ const syncVocabularyWithDatabase = async (blob: Blob, filename: string): Promise
   }
 };
 
-// Function to generate enhanced vocabulary suggestions
+// Function to enhance vocabulary suggestions with additional options from the database
 export const enhanceVocabularySuggestions = async (originalSuggestions: WordSuggestion[]): Promise<WordSuggestion[]> => {
   try {
     // If we have very few or no suggestions, return the original list
@@ -212,7 +211,7 @@ export const enhanceVocabularySuggestions = async (originalSuggestions: WordSugg
     // Query the database for additional suggestions
     const { data, error } = await supabase
       .from('mots_ameliores')
-      .select('mot_original, mot_ameliore, raison, categorie')
+      .select('mot_original, mot_ameliore, exemple_utilisation, categorie')
       .in('categorie', ['adjectif', 'adverbe', 'verbe', 'expression'])
       .limit(20);
       
@@ -227,7 +226,7 @@ export const enhanceVocabularySuggestions = async (originalSuggestions: WordSugg
       .map(item => ({
         original: item.mot_original,
         suggestion: item.mot_ameliore,
-        reason: item.raison
+        reason: item.exemple_utilisation || `Suggestion de la catégorie ${item.categorie}`
       }));
     
     // Combine original and new suggestions, but limit to reasonable number
