@@ -1,0 +1,22 @@
+
+motOriginal,motAmeliore,raison,categorie,niveau
+utiliser,implémenter,"Plus technique dans un contexte informatique",verbe,technique
+analyser,diagnostiquer,"Plus précis dans un contexte technique",verbe,technique
+problème technique,anomalie système,"Plus précis et professionnel",expression,technique
+données,métadonnées,"Plus spécifique selon le contexte",nom,technique
+connexion,interface de communication,"Plus détaillé et technique",nom,technique
+mise à jour,actualisation des paramètres,"Plus descriptif et précis",expression,technique
+télécharger,extraire les données,"Plus technique dans certains contextes",verbe,technique
+programmer,coder les algorithmes,"Plus spécifique au domaine informatique",verbe,technique
+enregistrer,sauvegarder l'instance,"Plus technique et précis",verbe,technique
+rapport,compte-rendu analytique,"Plus formel et détaillé",nom,technique
+équipe,cellule opérationnelle,"Plus structuré et formel",nom,technique
+développer,concevoir l'architecture,"Plus précis dans un contexte technique",verbe,technique
+créer,générer,"Plus technique et neutre",verbe,technique
+expliquer,expliciter le processus,"Plus détaillé et technique",verbe,technique
+changer,modifier les paramètres,"Plus précis et technique",verbe,technique
+vérifier,valider l'intégrité,"Plus technique et rigoureux",verbe,technique
+mesurer,quantifier les variables,"Plus scientifique et précis",verbe,technique
+construire,élaborer la structure,"Plus technique et méthodique",verbe,technique
+tester,évaluer les performances,"Plus technique et analytique",verbe,technique
+plan,stratégie d'implémentation,"Plus structuré et technique",nom,technique

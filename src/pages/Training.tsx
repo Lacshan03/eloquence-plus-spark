@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -11,7 +10,7 @@ import AudioRecorder from '@/components/AudioRecorder';
 import SessionResult from '@/components/SessionResult';
 import AudioAnalyzer, { AudioAnalysis } from '@/components/AudioAnalyzer';
 import VocabularySuggestions, { WordSuggestion } from '@/components/VocabularySuggestions';
-import { analyzeAudio } from '@/services/audioAnalysisService';
+import { analyzeAudio, initVocabularyDatabase } from '@/services/audioAnalysisService';
 import { useToast } from '@/hooks/use-toast';
 
 // Scenarios for training exercises
@@ -37,6 +36,14 @@ const Training = () => {
   const [audioAnalysis, setAudioAnalysis] = useState<AudioAnalysis | null>(null);
   const [wordSuggestions, setWordSuggestions] = useState<WordSuggestion[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+
+  // Initialize vocabulary database on component mount
+  useEffect(() => {
+    initVocabularyDatabase().catch(error => 
+      console.error('Error initializing vocabulary:', error)
+    );
+  }, []);
 
   // Mock scenarios data
   const scenarios: Scenario[] = [
@@ -101,7 +108,12 @@ const Training = () => {
     setWordSuggestions([]);
   };
 
-  const handleRecordingComplete = async (audioBlob: Blob) => {
+  const handleRecordingComplete = async (audioBlob: Blob, duration?: number) => {
+    // Save duration if provided
+    if (duration) {
+      setRecordingDuration(duration);
+    }
+    
     // In a real application, this would send the audio to your backend for processing
     try {
       setIsAnalyzing(true);
@@ -245,6 +257,8 @@ const Training = () => {
                 grammar={audioAnalysis.metrics.find(m => m.name === "Grammaire")?.value || 0}
                 feedback="Votre présentation démontre une bonne maîtrise générale de l'expression orale. Votre grammaire est excellente, et votre fluidité est satisfaisante. Concentrez-vous sur l'enrichissement de votre vocabulaire en utilisant des termes plus précis et variés pour renforcer l'impact de votre discours."
                 suggestedWords={wordSuggestions.map(s => s.suggestion)}
+                transcript={audioAnalysis.transcript}
+                duration={recordingDuration}
                 onFinish={handleReturnToDashboard}
               />
             )}

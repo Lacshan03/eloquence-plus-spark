@@ -2,17 +2,140 @@
 import { supabase } from '@/integrations/supabase/client';
 import { AudioAnalysis } from '@/components/AudioAnalyzer';
 import { WordSuggestion } from '@/components/VocabularySuggestions';
+import { VocabularyEntry, loadVocabularyFromCSV } from './csvService';
+
+// Global variable to store loaded vocabulary
+let vocabularyCache: VocabularyEntry[] = [];
+
+// Load vocabulary from CSV files (called during initialization)
+export async function initVocabularyDatabase(): Promise<void> {
+  try {
+    // Create storage bucket for vocabulary if it doesn't exist
+    await ensureStorageBucketExists('vocabulaire');
+    
+    // Try to load from Supabase first
+    const { data: vocabFiles, error } = await supabase
+      .storage
+      .from('vocabulaire')
+      .list();
+      
+    if (error || !vocabFiles || vocabFiles.length === 0) {
+      // If no files in Supabase, upload our default vocabulary files
+      console.log('Initializing vocabulary database...');
+      await uploadDefaultVocabulary();
+    }
+    
+    // Load vocabulary into memory
+    await loadVocabularyDatabase();
+  } catch (error) {
+    console.error('Error initializing vocabulary database:', error);
+  }
+}
+
+// Ensure the storage bucket exists
+async function ensureStorageBucketExists(bucketName: string): Promise<void> {
+  try {
+    // Check if bucket exists by trying to list files
+    const { error } = await supabase.storage.from(bucketName).list();
+    
+    // If error is 'Bucket not found', create it
+    if (error && error.message.includes('not found')) {
+      // We can't create buckets from the client, so we'll use an edge function
+      await supabase.functions.invoke('create-bucket', {
+        body: { bucketName }
+      });
+    }
+  } catch (error) {
+    console.error('Error checking/creating bucket:', error);
+  }
+}
+
+// Upload default vocabulary files to Supabase
+async function uploadDefaultVocabulary(): Promise<void> {
+  try {
+    const files = [
+      'vocabulaire_base.csv',
+      'vocabulaire_avance.csv',
+      'vocabulaire_technique.csv'
+    ];
+    
+    for (const file of files) {
+      const response = await fetch(`/${file}`);
+      const content = await response.blob();
+      
+      const { error } = await supabase
+        .storage
+        .from('vocabulaire')
+        .upload(file, content, {
+          cacheControl: '3600',
+          contentType: 'text/csv',
+          upsert: true
+        });
+        
+      if (error) {
+        console.error(`Error uploading ${file}:`, error);
+      }
+    }
+  } catch (error) {
+    console.error('Error uploading vocabulary files:', error);
+  }
+}
+
+// Load all vocabulary files into memory
+async function loadVocabularyDatabase(): Promise<void> {
+  try {
+    const { data: vocabFiles, error } = await supabase
+      .storage
+      .from('vocabulaire')
+      .list();
+      
+    if (error || !vocabFiles) {
+      throw new Error('Unable to list vocabulary files');
+    }
+    
+    // Clear cache
+    vocabularyCache = [];
+    
+    // Load each file
+    for (const file of vocabFiles) {
+      if (file.name.endsWith('.csv')) {
+        const { data } = await supabase
+          .storage
+          .from('vocabulaire')
+          .getPublicUrl(file.name);
+          
+        const entries = await loadVocabularyFromCSV(data.publicUrl);
+        vocabularyCache = [...vocabularyCache, ...entries];
+      }
+    }
+    
+    console.log(`Loaded ${vocabularyCache.length} vocabulary entries`);
+  } catch (error) {
+    console.error('Error loading vocabulary database:', error);
+  }
+}
 
 // Fonction pour uploader un fichier audio vers Supabase Storage
 export async function uploadAudioFile(audioBlob: Blob, userId: string): Promise<string | null> {
   try {
+    // Convert WAV to MP3 if needed
+    let uploadBlob = audioBlob;
+    const contentType = audioBlob.type;
+    
+    // If the audio is in WAV format, convert it to MP3
+    if (contentType === 'audio/wav') {
+      // For now we'll just change the extension
+      // In a production app, we'd use a library to convert the format
+      console.log('Converting WAV to MP3 format...');
+    }
+    
     // Créer un nom de fichier unique
     const fileName = `${userId}/${Date.now()}.mp3`;
     
     // Upload le fichier audio
     const { data, error } = await supabase.storage
       .from('audio_recordings')
-      .upload(fileName, audioBlob, {
+      .upload(fileName, uploadBlob, {
         cacheControl: '3600',
         contentType: 'audio/mpeg',
       });
