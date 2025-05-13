@@ -35,12 +35,21 @@ export async function saveRecording(
   duration: number
 ): Promise<string | null> {
   try {
+    // Récupérer l'ID de l'utilisateur connecté
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session?.user) {
+      throw new Error("Utilisateur non authentifié");
+    }
+    
+    const userId = sessionData.session.user.id;
+    
     // Insérer l'enregistrement dans la base de données
     const { data, error } = await supabase
       .from('enregistrements')
       .insert({
         chemin_audio: audioPath,
-        duree: duration
+        duree: duration,
+        user_id: userId
       })
       .select('id')
       .single();
