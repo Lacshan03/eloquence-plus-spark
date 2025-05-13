@@ -31,6 +31,70 @@ const getSupabaseClient = (req: Request) => {
   });
 };
 
+// Analyse détaillée du texte avec OpenAI
+async function analyzeTextWithGPT(transcript: string) {
+  const openaiApiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!openaiApiKey) {
+    throw new Error("Clé API OpenAI non configurée");
+  }
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openaiApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `Tu es un expert en analyse d'éloquence française. Analyse le discours fourni et évalue ces critères:
+              1. Fluidité (note /100): évaluer la fluidité, le débit de parole, l'absence d'hésitations
+              2. Vocabulaire (note /100): richesse lexicale, précision des termes, absence de familiarités
+              3. Grammaire (note /100): correction syntaxique, conjugaisons, phrases bien construites
+              4. Rythme (note /100): prosodie, variations de ton, expressivité
+              
+              Identifie également jusqu'à 5 expressions ou mots qui pourraient être améliorés, avec une suggestion
+              plus soutenue pour chacun et la raison de ce changement.
+              
+              Donne aussi un court feedback général (2-3 phrases maximum).
+              
+              Réponds UNIQUEMENT au format JSON suivant:
+              {
+                "score_fluidite": <nombre>,
+                "score_vocabulaire": <nombre>,
+                "score_grammaire": <nombre>,
+                "score_rythme": <nombre>,
+                "substitutions": [{"original": "...", "suggestion": "...", "raison": "..."}],
+                "feedback": "..."
+              }`
+          },
+          {
+            role: "user",
+            content: transcript
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 1000,
+        response_format: { type: "json_object" }
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Erreur OpenAI: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json();
+    return JSON.parse(result.choices[0].message.content);
+  } catch (error) {
+    console.error("Erreur lors de l'analyse GPT:", error);
+    throw error;
+  }
+}
+
 // Calculate metrics based on transcript analysis
 const calculateMetrics = (transcript: string, substitutions: any[]) => {
   // Basic metrics calculation
@@ -86,12 +150,6 @@ const calculateMetrics = (transcript: string, substitutions: any[]) => {
   };
 };
 
-// Generate improvement suggestions
-const generateSuggestions = async (transcript: string, substitutions: any[]) => {
-  // In a real implementation, this could use GPT to generate personalized suggestions
-  return substitutions.slice(0, 5);
-};
-
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
@@ -145,57 +203,78 @@ serve(async (req) => {
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`OpenAI API error: ${error}`);
+      throw new Error(`OpenAI API error (transcription): ${error}`);
     }
 
     // Get the transcript from OpenAI
     const transcriptionResult = await response.json();
     const transcript = transcriptionResult.text;
 
-    // Get words from the database for improvement
-    const { data: motsAmeliores, error: dbError } = await supabase
-      .from("mots_ameliores")
-      .select("mot_original, mot_ameliore, raison");
+    // Analyse avancée avec GPT
+    let nlpAnalysis;
+    try {
+      nlpAnalysis = await analyzeTextWithGPT(transcript);
+      console.log("NLP Analysis result:", JSON.stringify(nlpAnalysis));
+    } catch (error) {
+      console.error("Erreur lors de l'analyse NLP:", error);
+      // En cas d'erreur, utiliser notre méthode de calcul de métriques de secours
+      const { data: motsAmeliores, error: dbError } = await supabase
+        .from("mots_ameliores")
+        .select("mot_original, mot_ameliore, raison");
       
-    if (dbError) {
-      throw new Error(`Erreur de base de données: ${dbError.message}`);
+      if (dbError) {
+        throw new Error(`Erreur de base de données: ${dbError.message}`);
+      }
+
+      // Find words to improve
+      const substitutions = [];
+      const words = transcript.toLowerCase().match(/\b\w+\b/g) || [];
+      const wordMap = new Map();
+      
+      motsAmeliores?.forEach(item => {
+        wordMap.set(item.mot_original.toLowerCase(), {
+          suggestion: item.mot_ameliore,
+          reason: item.raison || "Expression plus soutenue et précise"
+        });
+      });
+
+      words.forEach(word => {
+        if (wordMap.has(word)) {
+          const { suggestion, reason } = wordMap.get(word);
+          substitutions.push({
+            original: word,
+            suggestion,
+            reason
+          });
+        }
+      });
+
+      // Calculate metrics using fallback method
+      const analysisResult = calculateMetrics(transcript, substitutions);
+      nlpAnalysis = {
+        score_fluidite: analysisResult.metrics.find(m => m.name === "Fluidité")?.value || 75,
+        score_vocabulaire: analysisResult.metrics.find(m => m.name === "Vocabulaire")?.value || 70,
+        score_grammaire: analysisResult.metrics.find(m => m.name === "Grammaire")?.value || 80,
+        score_rythme: analysisResult.metrics.find(m => m.name === "Rythme")?.value || 75,
+        substitutions: substitutions,
+        feedback: "Analyse automatique basée sur les métriques extraites"
+      };
     }
 
-    // Find words to improve
-    const substitutions = [];
-    const words = transcript.toLowerCase().match(/\b\w+\b/g) || [];
-    const wordMap = new Map();
-    
-    motsAmeliores?.forEach(item => {
-      wordMap.set(item.mot_original.toLowerCase(), {
-        suggestion: item.mot_ameliore,
-        reason: item.raison || "Expression plus soutenue et précise"
-      });
-    });
-
-    words.forEach(word => {
-      if (wordMap.has(word)) {
-        const { suggestion, reason } = wordMap.get(word);
-        substitutions.push({
-          original: word,
-          suggestion,
-          reason
-        });
-      }
-    });
-
-    // Calculate metrics
-    const analysisResult = calculateMetrics(transcript, substitutions);
-
-    // Generate suggestions
-    const suggestions = await generateSuggestions(transcript, substitutions);
+    // Calculate overall score (weighted average)
+    const overallScore = Math.round(
+      (nlpAnalysis.score_vocabulaire * 0.35) +
+      (nlpAnalysis.score_fluidite * 0.3) +
+      (nlpAnalysis.score_grammaire * 0.25) +
+      (nlpAnalysis.score_rythme * 0.1)
+    );
 
     // Update the enregistrement with the transcript and score
     await supabase
       .from("enregistrements")
       .update({
         transcript: transcript,
-        score_eloquence: analysisResult.score
+        score_eloquence: overallScore
       })
       .eq("id", enregistrementId);
 
@@ -204,12 +283,12 @@ serve(async (req) => {
       .from("analyses_eloquence")
       .insert({
         enregistrement_id: enregistrementId,
-        score_fluidite: analysisResult.metrics.find(m => m.name === "Fluidité")?.value,
-        score_vocabulaire: analysisResult.metrics.find(m => m.name === "Vocabulaire")?.value,
-        score_grammaire: analysisResult.metrics.find(m => m.name === "Grammaire")?.value,
-        score_rythme: analysisResult.metrics.find(m => m.name === "Rythme")?.value,
-        substitutions: JSON.stringify(substitutions),
-        feedback: "Analyse automatique basée sur les métriques extraites"
+        score_fluidite: nlpAnalysis.score_fluidite,
+        score_vocabulaire: nlpAnalysis.score_vocabulaire,
+        score_grammaire: nlpAnalysis.score_grammaire,
+        score_rythme: nlpAnalysis.score_rythme,
+        substitutions: nlpAnalysis.substitutions,
+        feedback: nlpAnalysis.feedback
       });
 
     // Return the results
@@ -218,10 +297,15 @@ serve(async (req) => {
         success: true,
         analysis: {
           transcript,
-          score: analysisResult.score,
-          metrics: analysisResult.metrics
+          score: overallScore,
+          metrics: [
+            { name: "Fluidité", value: nlpAnalysis.score_fluidite, color: "#38B2AC" },
+            { name: "Vocabulaire", value: nlpAnalysis.score_vocabulaire, color: "#ED8936" },
+            { name: "Grammaire", value: nlpAnalysis.score_grammaire, color: "#9F7AEA" },
+            { name: "Rythme", value: nlpAnalysis.score_rythme, color: "#F687B3" },
+          ]
         },
-        suggestions
+        suggestions: nlpAnalysis.substitutions
       }),
       {
         status: 200,
