@@ -6,3 +6,6 @@ verify_jwt = true
 
 [functions.create-bucket]
 verify_jwt = true
+
+[functions.vocabulary-sync]
+verify_jwt = true

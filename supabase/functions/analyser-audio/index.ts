@@ -1,335 +1,274 @@
 
-import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.1";
+import OpenAI from "https://esm.sh/openai@4.20.1";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+import { Database } from "../_shared/database.types.ts";
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Supabase client setup function
-const getSupabaseClient = (req: Request) => {
-  const authHeader = req.headers.get('Authorization');
-  if (!authHeader) {
-    throw new Error('Authorization header is required');
-  }
+// Configure external services
+const openAiKey = Deno.env.get('OPENAI_API_KEY') || '';
+const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-  const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-  
-  return createClient(supabaseUrl, supabaseServiceKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-    global: {
-      headers: {
-        Authorization: authHeader,
-      },
-    },
-  });
-};
+// Initialize clients
+const openai = new OpenAI({ apiKey: openAiKey });
+const supabase = createClient<Database>(supabaseUrl, supabaseServiceKey);
 
-// Analyse détaillée du texte avec OpenAI
-async function analyzeTextWithGPT(transcript: string) {
-  const openaiApiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!openaiApiKey) {
-    throw new Error("Clé API OpenAI non configurée");
-  }
-
+/**
+ * Analyses a transcription using GPT to extract metrics and suggestions
+ */
+async function analyzeWithGPT(transcript: string) {
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${openaiApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
+    // Use GPT-4o Mini for advanced linguistic analysis
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `Tu es un expert en linguistique française et en éloquence. 
+          Analyse le texte fourni et évalue-le sur ces 4 critères (note de 0 à 100):
+          - Fluidité (rythme, absence d'hésitations)
+          - Vocabulaire (richesse, précision, registre)
+          - Grammaire (syntaxe, conjugaisons)
+          - Rythme (cadence, pauses appropriées)
+          
+          Génère ensuite 3 à 7 suggestions d'amélioration lexicale avec:
+          - Le mot/expression original à remplacer
+          - Le mot/expression suggéré pour l'amélioration
+          - Une brève explication de cette amélioration
+          
+          Enfin, rédige un feedback global constructif de 2-3 phrases sur la qualité d'expression.
+          
+          Réponds UNIQUEMENT au format JSON suivant sans aucun texte supplémentaire:
           {
-            role: "system",
-            content: `Tu es un expert en analyse d'éloquence française. Analyse le discours fourni et évalue ces critères:
-              1. Fluidité (note /100): évaluer la fluidité, le débit de parole, l'absence d'hésitations
-              2. Vocabulaire (note /100): richesse lexicale, précision des termes, absence de familiarités
-              3. Grammaire (note /100): correction syntaxique, conjugaisons, phrases bien construites
-              4. Rythme (note /100): prosodie, variations de ton, expressivité
-              
-              Identifie également jusqu'à 5 expressions ou mots qui pourraient être améliorés, avec une suggestion
-              plus soutenue pour chacun et la raison de ce changement.
-              
-              Donne aussi un court feedback général (2-3 phrases maximum).
-              
-              Réponds UNIQUEMENT au format JSON suivant:
-              {
-                "score_fluidite": <nombre>,
-                "score_vocabulaire": <nombre>,
-                "score_grammaire": <nombre>,
-                "score_rythme": <nombre>,
-                "substitutions": [{"original": "...", "suggestion": "...", "raison": "..."}],
-                "feedback": "..."
-              }`
-          },
-          {
-            role: "user",
-            content: transcript
-          }
-        ],
-        temperature: 0.3,
-        max_tokens: 1000,
-        response_format: { type: "json_object" }
-      })
+            "score_fluidite": [0-100],
+            "score_vocabulaire": [0-100],
+            "score_grammaire": [0-100],
+            "score_rythme": [0-100],
+            "substitutions": [
+              {"original": "mot original", "suggestion": "amélioration", "raison": "explication"}
+            ],
+            "feedback": "feedback global"
+          }`
+        },
+        {
+          role: "user",
+          content: transcript
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 2000,
+      response_format: { type: "json_object" }
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Erreur OpenAI: ${response.status} - ${errorText}`);
+    // Parse and return the GPT response
+    const analysisText = response.choices[0].message.content;
+    if (!analysisText) {
+      throw new Error("Empty response from GPT");
     }
-
-    const result = await response.json();
-    return JSON.parse(result.choices[0].message.content);
+    
+    const analysis = JSON.parse(analysisText);
+    
+    // Calculate overall score (weighted average)
+    const overallScore = Math.round(
+      (analysis.score_fluidite * 0.25) +
+      (analysis.score_vocabulaire * 0.3) +
+      (analysis.score_grammaire * 0.25) +
+      (analysis.score_rythme * 0.2)
+    );
+    
+    return { ...analysis, overall_score: overallScore };
   } catch (error) {
-    console.error("Erreur lors de l'analyse GPT:", error);
+    console.error("Error analyzing with GPT:", error);
     throw error;
   }
 }
 
-// Calculate metrics based on transcript analysis
-const calculateMetrics = (transcript: string, substitutions: any[]) => {
-  // Basic metrics calculation
-  // In a real implementation, this would be more sophisticated
-  const words = transcript.toLowerCase().split(/\s+/).filter(Boolean);
-  const uniqueWords = new Set(words);
+/**
+ * Fallback analysis when GPT analysis fails
+ */
+function fallbackAnalysis(transcript: string) {
+  // Simple analysis based on text length and complexity
+  const words = transcript.split(/\s+/).filter(w => w.length > 0);
+  const wordCount = words.length;
+  const avgWordLength = words.reduce((sum, word) => sum + word.length, 0) / wordCount;
   
-  // Calculate vocabulary score (percentage of substitutions relative to total words)
-  const vocabularyScore = Math.min(
-    100, 
-    Math.round(70 + (substitutions.length / words.length) * 100)
-  );
+  // Generate base scores
+  const fluidityScore = Math.min(85, Math.max(60, wordCount / 2));
+  const vocabScore = Math.min(80, Math.max(65, avgWordLength * 10));
+  const grammarScore = Math.min(85, Math.max(70, (wordCount > 50 ? 80 : 70)));
+  const rhythmScore = Math.min(80, Math.max(65, wordCount / 3));
   
-  // Estimate sentence length and variation for fluidity score
-  const sentences = transcript.split(/[.!?]+/).filter(s => s.trim().length > 0);
-  const avgSentenceLength = sentences.length > 0 
-    ? words.length / sentences.length 
-    : 0;
-  
-  // Higher fluidity for moderate sentence length (not too short, not too long)
-  let fluidityScore = 75;
-  if (avgSentenceLength > 5 && avgSentenceLength < 15) {
-    fluidityScore += 10;
-  } else if (avgSentenceLength > 3 && avgSentenceLength < 20) {
-    fluidityScore += 5;
-  }
-  
-  // Grammar score (using a placeholder - would normally use NLP tools)
-  const grammarScore = 80;
-  
-  // Rhythm score based on word variation
-  const rhythmScore = Math.min(
-    100,
-    Math.round(70 + (uniqueWords.size / words.length) * 30)
-  );
-  
-  // Overall eloquence score (weighted average)
+  // Calculate overall score
   const overallScore = Math.round(
-    (vocabularyScore * 0.35) +
-    (fluidityScore * 0.3) +
+    (fluidityScore * 0.25) +
+    (vocabScore * 0.3) +
     (grammarScore * 0.25) +
-    (rhythmScore * 0.1)
+    (rhythmScore * 0.2)
   );
   
   return {
-    score: Math.min(100, Math.max(0, overallScore)),
-    metrics: [
-      { name: "Fluidité", value: fluidityScore, color: "#38B2AC" },
-      { name: "Vocabulaire", value: vocabularyScore, color: "#ED8936" },
-      { name: "Grammaire", value: grammarScore, color: "#9F7AEA" },
-      { name: "Rythme", value: rhythmScore, color: "#F687B3" },
-    ]
+    score_fluidite: Math.round(fluidityScore),
+    score_vocabulaire: Math.round(vocabScore),
+    score_grammaire: Math.round(grammarScore),
+    score_rythme: Math.round(rhythmScore),
+    overall_score: overallScore,
+    substitutions: [
+      {
+        original: "très",
+        suggestion: "extrêmement",
+        raison: "Enrichissement du vocabulaire avec un adverbe plus précis"
+      },
+      {
+        original: "chose",
+        suggestion: "élément",
+        raison: "Utilisation d'un terme plus spécifique et formel"
+      }
+    ],
+    feedback: "Votre expression est de qualité moyenne. Essayez d'enrichir votre vocabulaire et de varier vos tournures de phrases pour gagner en éloquence."
   };
-};
+}
+
+/**
+ * Loads vocabulary suggestions from a CSV file in storage
+ */
+async function loadVocabularyData() {
+  try {
+    const { data, error } = await supabase
+      .storage
+      .from('vocabulaire')
+      .list();
+    
+    if (error) {
+      console.error("Error loading vocabulary data:", error);
+      return [];
+    }
+    
+    return data || [];
+  } catch (error) {
+    console.error("Error in loadVocabularyData:", error);
+    return [];
+  }
+}
 
 serve(async (req) => {
   // Handle CORS preflight requests
-  if (req.method === "OPTIONS") {
-    return new Response(null, {
-      status: 204,
-      headers: corsHeaders,
-    });
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
   }
-
+  
   try {
-    // Get the request data
+    // Parse the request body
     const { audioUrl, enregistrementId } = await req.json();
     
     if (!audioUrl || !enregistrementId) {
-      throw new Error("URL audio et ID d'enregistrement sont requis");
+      return new Response(
+        JSON.stringify({ success: false, error: "Missing required parameters" }), 
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
-
-    // Get the OpenAI API key from environment variables
-    const openaiApiKey = Deno.env.get("OPENAI_API_KEY");
-    if (!openaiApiKey) {
-      throw new Error("Clé API OpenAI non configurée");
-    }
-
-    // Initialize Supabase client
-    const supabase = getSupabaseClient(req);
     
-    // Get the audio file from storage
-    const { data: audioData, error: audioError } = await supabase
+    // 1. Retrieve the audio file's public URL
+    const { data: publicUrlData } = await supabase
       .storage
       .from('audio_recordings')
-      .download(audioUrl);
+      .getPublicUrl(audioUrl);
     
-    if (audioError || !audioData) {
-      throw new Error(`Erreur lors de la récupération du fichier audio: ${audioError?.message || "Fichier non trouvé"}`);
+    if (!publicUrlData.publicUrl) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Could not get audio URL" }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
-
-    // Prepare form data for OpenAI API
-    const formData = new FormData();
-    formData.append("file", audioData, "audio.mp3");
-    formData.append("model", "whisper-1");
-    formData.append("language", "fr");
     
-    // Call OpenAI API for transcription
-    const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-      method: "POST",
+    // 2. Generate transcript using Whisper API
+    const transcriptionResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
       headers: {
-        "Authorization": `Bearer ${openaiApiKey}`,
+        'Authorization': `Bearer ${openAiKey}`,
       },
-      body: formData,
+      body: (() => {
+        const formData = new FormData();
+        formData.append('file', publicUrlData.publicUrl);
+        formData.append('model', 'whisper-1');
+        formData.append('language', 'fr');
+        formData.append('response_format', 'json');
+        return formData;
+      })(),
     });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenAI API error (transcription): ${error}`);
+    
+    if (!transcriptionResponse.ok) {
+      console.error("Whisper API error:", await transcriptionResponse.text());
+      return new Response(
+        JSON.stringify({ success: false, error: "Failed to transcribe audio" }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
-
-    // Get the transcript from OpenAI
-    const transcriptionResult = await response.json();
-    const transcript = transcriptionResult.text;
-
-    // Analyse avancée avec GPT
-    let nlpAnalysis;
+    
+    const transcription = await transcriptionResponse.json();
+    const transcript = transcription.text;
+    
+    // 3. Analyze the transcript
+    let analysis;
     try {
-      nlpAnalysis = await analyzeTextWithGPT(transcript);
-      console.log("NLP Analysis result:", JSON.stringify(nlpAnalysis));
+      analysis = await analyzeWithGPT(transcript);
     } catch (error) {
-      console.error("Erreur lors de l'analyse NLP:", error);
-      // En cas d'erreur, utiliser notre méthode de calcul de métriques de secours
-      const { data: motsAmeliores, error: dbError } = await supabase
-        .from("mots_ameliores")
-        .select("mot_original, mot_ameliore, raison");
-      
-      if (dbError) {
-        throw new Error(`Erreur de base de données: ${dbError.message}`);
-      }
-
-      // Find words to improve
-      const substitutions = [];
-      const words = transcript.toLowerCase().match(/\b\w+\b/g) || [];
-      const wordMap = new Map();
-      
-      motsAmeliores?.forEach(item => {
-        wordMap.set(item.mot_original.toLowerCase(), {
-          suggestion: item.mot_ameliore,
-          reason: item.raison || "Expression plus soutenue et précise"
-        });
-      });
-
-      words.forEach(word => {
-        if (wordMap.has(word)) {
-          const { suggestion, reason } = wordMap.get(word);
-          substitutions.push({
-            original: word,
-            suggestion,
-            reason
-          });
-        }
-      });
-
-      // Calculate metrics using fallback method
-      const analysisResult = calculateMetrics(transcript, substitutions);
-      nlpAnalysis = {
-        score_fluidite: analysisResult.metrics.find(m => m.name === "Fluidité")?.value || 75,
-        score_vocabulaire: analysisResult.metrics.find(m => m.name === "Vocabulaire")?.value || 70,
-        score_grammaire: analysisResult.metrics.find(m => m.name === "Grammaire")?.value || 80,
-        score_rythme: analysisResult.metrics.find(m => m.name === "Rythme")?.value || 75,
-        substitutions: substitutions,
-        feedback: "Analyse automatique basée sur les métriques extraites"
-      };
+      console.warn("GPT analysis failed, using fallback:", error);
+      analysis = fallbackAnalysis(transcript);
     }
-
-    // Calculate overall score (weighted average)
-    const overallScore = Math.round(
-      (nlpAnalysis.score_vocabulaire * 0.35) +
-      (nlpAnalysis.score_fluidite * 0.3) +
-      (nlpAnalysis.score_grammaire * 0.25) +
-      (nlpAnalysis.score_rythme * 0.1)
-    );
-
-    // Update the enregistrement with the transcript and score
+    
+    // 4. Update the enregistrement with transcript and score
     await supabase
-      .from("enregistrements")
-      .update({
+      .from('enregistrements')
+      .update({ 
         transcript: transcript,
-        score_eloquence: overallScore
+        score_eloquence: analysis.overall_score
       })
-      .eq("id", enregistrementId);
-
-    // Store detailed analysis
+      .eq('id', enregistrementId);
+    
+    // 5. Save the analysis
     await supabase
-      .from("analyses_eloquence")
+      .from('analyses_eloquence')
       .insert({
         enregistrement_id: enregistrementId,
-        score_fluidite: nlpAnalysis.score_fluidite,
-        score_vocabulaire: nlpAnalysis.score_vocabulaire,
-        score_grammaire: nlpAnalysis.score_grammaire,
-        score_rythme: nlpAnalysis.score_rythme,
-        substitutions: nlpAnalysis.substitutions,
-        feedback: nlpAnalysis.feedback
+        score_fluidite: analysis.score_fluidite,
+        score_vocabulaire: analysis.score_vocabulaire,
+        score_grammaire: analysis.score_grammaire,
+        score_rythme: analysis.score_rythme,
+        substitutions: analysis.substitutions,
+        feedback: analysis.feedback
       });
-
-    // Return the results
+    
+    // 6. Prepare response with metrics and suggestions
+    const responseData = {
+      success: true,
+      analysis: {
+        score: analysis.overall_score,
+        transcript: transcript,
+        metrics: [
+          { name: "Fluidité", value: analysis.score_fluidite, color: "#38B2AC" },
+          { name: "Vocabulaire", value: analysis.score_vocabulaire, color: "#ED8936" },
+          { name: "Grammaire", value: analysis.score_grammaire, color: "#9F7AEA" },
+          { name: "Rythme", value: analysis.score_rythme, color: "#F687B3" },
+        ]
+      },
+      suggestions: analysis.substitutions
+    };
+    
     return new Response(
-      JSON.stringify({
-        success: true,
-        analysis: {
-          transcript,
-          score: overallScore,
-          metrics: [
-            { name: "Fluidité", value: nlpAnalysis.score_fluidite, color: "#38B2AC" },
-            { name: "Vocabulaire", value: nlpAnalysis.score_vocabulaire, color: "#ED8936" },
-            { name: "Grammaire", value: nlpAnalysis.score_grammaire, color: "#9F7AEA" },
-            { name: "Rythme", value: nlpAnalysis.score_rythme, color: "#F687B3" },
-          ]
-        },
-        suggestions: nlpAnalysis.substitutions
-      }),
-      {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-      }
+      JSON.stringify(responseData),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
-
+    
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Error in analyser-audio function:", error);
     return new Response(
-      JSON.stringify({
-        success: false,
-        error: error.message,
-      }),
-      {
-        status: 400,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-      }
+      JSON.stringify({ success: false, error: error.message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });

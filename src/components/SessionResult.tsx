@@ -3,9 +3,10 @@ import React from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import ProgressChart from './ProgressChart';
-import { Download, Save } from 'lucide-react';
+import { Download, Save, FileCode, PieChart } from 'lucide-react';
 import { exportTranscriptionToCSV, exportSuggestionsToCSV } from '@/services/csvService';
 import { toast } from '@/hooks/use-toast';
+import { WordSuggestion } from './VocabularySuggestions';
 
 interface ResultProps {
   score: number;
@@ -16,7 +17,9 @@ interface ResultProps {
   suggestedWords: string[];
   transcript?: string;
   duration?: number;
+  wordSuggestions?: WordSuggestion[];
   onFinish: () => void;
+  onRunPythonAnalysis?: () => void;
 }
 
 const SessionResult: React.FC<ResultProps> = ({
@@ -28,7 +31,9 @@ const SessionResult: React.FC<ResultProps> = ({
   suggestedWords,
   transcript = "",
   duration = 0,
-  onFinish
+  wordSuggestions = [],
+  onFinish,
+  onRunPythonAnalysis
 }) => {
   // Data pour le graphique en radar
   const chartData = [
@@ -60,6 +65,17 @@ const SessionResult: React.FC<ResultProps> = ({
 
   // Handler for exporting vocabulary to CSV
   const handleExportVocabulary = () => {
+    // First try to use sophisticated word suggestions if available
+    if (wordSuggestions && wordSuggestions.length > 0) {
+      exportSuggestionsToCSV(wordSuggestions);
+      toast({
+        title: "Exporté avec succès",
+        description: "Le vocabulaire a été enregistré en CSV"
+      });
+      return;
+    }
+    
+    // Fall back to simple word list if that's all we have
     if (suggestedWords.length > 0) {
       // Convert simple strings to WordSuggestion format
       const suggestions = suggestedWords.map(word => ({
@@ -134,6 +150,12 @@ const SessionResult: React.FC<ResultProps> = ({
             <div className="mt-4 pt-4 border-t border-gray-200">
               <h4 className="text-sm font-medium mb-2 text-gray-600">Transcription</h4>
               <p className="text-sm italic text-gray-600 bg-gray-50 p-3 rounded-md">{transcript}</p>
+              
+              {duration > 0 && (
+                <p className="text-xs text-gray-500 mt-2">
+                  Durée: {Math.floor(duration / 60)}:{String(duration % 60).padStart(2, '0')}
+                </p>
+              )}
             </div>
           )}
         </Card>
@@ -161,6 +183,32 @@ const SessionResult: React.FC<ResultProps> = ({
               </span>
             ))}
           </div>
+          
+          {onRunPythonAnalysis && (
+            <div className="mt-6 pt-4 border-t border-gray-200">
+              <h4 className="text-sm font-medium mb-3 flex items-center gap-1 text-gray-700">
+                <FileCode size={16} />
+                Analyses avancées
+              </h4>
+              
+              <div className="space-y-3">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="w-full justify-start gap-2"
+                  onClick={onRunPythonAnalysis}
+                >
+                  <PieChart size={14} className="text-eloquence-accent" />
+                  Analyser avec Python
+                </Button>
+                
+                <p className="text-xs text-gray-500">
+                  Exécute une analyse linguistique approfondie avec nos modèles Python 
+                  pour obtenir des statistiques détaillées et des visualisations.
+                </p>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
       
